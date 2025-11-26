@@ -1,11 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include "Common.h"
 #include "Data_Store.h"
 
 // =======================
-//   ENTRY STRUCT (Linked List)
+//   ENTRY STRUCT
 // =======================
 typedef struct Entry {
     char key[KEY_LEN];
@@ -14,13 +15,16 @@ typedef struct Entry {
 } Entry;
 
 // =======================
-//   GLOBAL HASH TABLE & DUMP FILE
+//   GLOBALS
 // =======================
 static Entry *table[HASH_SIZE];
 static char dump_filename[64];
 
+// Mutex for thread safety
+pthread_mutex_t kv_lock = PTHREAD_MUTEX_INITIALIZER;
+
 // =======================
-//   SIMPLE HASH FUNCTION
+//   HASH FUNCTION
 // =======================
 static unsigned int hash(const char *key) {
     unsigned int h = 0;
@@ -29,16 +33,14 @@ static unsigned int hash(const char *key) {
 }
 
 // =======================
-//   INITIALIZE DATA STORE
+//   INITIALIZE STORE
 // =======================
 int kv_init(const char *filename) {
-    // IMPORTANT: reset table completely
     memset(table, 0, sizeof(table));
-
     strncpy(dump_filename, filename, sizeof(dump_filename));
 
     FILE *fp = fopen(filename, "r");
-    if (!fp) return 0; // File may not exist (fresh start)
+    if (!fp) return 0; // No file yet
 
     char key[KEY_LEN], value[VALUE_LEN];
     while (fscanf(fp, "%63[^=]=%255s\n", key, value) == 2) {
@@ -49,15 +51,18 @@ int kv_init(const char *filename) {
 }
 
 // =======================
-//   SET KEY-VALUE PAIR
+//   SET
 // =======================
 int kv_set(const char *key, const char *value) {
+    pthread_mutex_lock(&kv_lock);
+
     unsigned int h = hash(key);
     Entry *curr = table[h];
 
     while (curr) {
-        if (strcmp(curr->key, key) == 0) {
+        if (strcmp(curr->key, key) == 0) { // overwrite existing
             strncpy(curr->value, value, VALUE_LEN);
+            pthread_mutex_unlock(&kv_lock);
             return 0;
         }
         curr = curr->next;
@@ -69,30 +74,39 @@ int kv_set(const char *key, const char *value) {
     strncpy(curr->value, value, VALUE_LEN);
     curr->next = table[h];
     table[h] = curr;
+
+    pthread_mutex_unlock(&kv_lock);
     return 0;
 }
 
 // =======================
-//   GET VALUE FOR KEY
+//   GET
 // =======================
 int kv_get(const char *key, char *out_buf, size_t out_size) {
+    pthread_mutex_lock(&kv_lock);
+
     unsigned int h = hash(key);
     Entry *curr = table[h];
 
     while (curr) {
         if (strcmp(curr->key, key) == 0) {
             strncpy(out_buf, curr->value, out_size);
+            pthread_mutex_unlock(&kv_lock);
             return 0;
         }
         curr = curr->next;
     }
+
+    pthread_mutex_unlock(&kv_lock);
     return -1;
 }
 
 // =======================
-//   DELETE KEY-VALUE PAIR
+//   DELETE
 // =======================
 int kv_delete(const char *key) {
+    pthread_mutex_lock(&kv_lock);
+
     unsigned int h = hash(key);
     Entry *curr = table[h];
     Entry *prev = NULL;
@@ -102,18 +116,23 @@ int kv_delete(const char *key) {
             if (prev) prev->next = curr->next;
             else table[h] = curr->next;
             free(curr);
+            pthread_mutex_unlock(&kv_lock);
             return 0;
         }
         prev = curr;
         curr = curr->next;
     }
+
+    pthread_mutex_unlock(&kv_lock);
     return -1;
 }
 
 // =======================
-//   LIST ALL KEYS
+//   LIST KEYS
 // =======================
 int kv_keys(char *out_buf, size_t out_size) {
+    pthread_mutex_lock(&kv_lock);
+
     size_t used = 0;
 
     for (int i = 0; i < HASH_SIZE; i++) {
@@ -121,23 +140,34 @@ int kv_keys(char *out_buf, size_t out_size) {
         while (curr) {
             int written = snprintf(out_buf + used, out_size - used, "%s\n", curr->key);
             if (written < 0 || written >= (int)(out_size - used)) {
-                return (int)used;
+                pthread_mutex_unlock(&kv_lock);
+                return used;
             }
             used += written;
             curr = curr->next;
         }
     }
 
-    if (used == 0) snprintf(out_buf, out_size, "(empty)\n");
-    return (int)used;
+    if (used == 0) {
+        snprintf(out_buf, out_size, "(empty)\n");
+        used = strlen(out_buf);
+    }
+
+    pthread_mutex_unlock(&kv_lock);
+    return used;
 }
 
 // =======================
-//   SAVE TABLE TO DISK
+//   SAVE TO DISK
 // =======================
 int kv_save(void) {
+    pthread_mutex_lock(&kv_lock);
+
     FILE *fp = fopen(dump_filename, "w");
-    if (!fp) return -1;
+    if (!fp) {
+        pthread_mutex_unlock(&kv_lock);
+        return -1;
+    }
 
     for (int i = 0; i < HASH_SIZE; i++) {
         Entry *curr = table[i];
@@ -146,6 +176,8 @@ int kv_save(void) {
             curr = curr->next;
         }
     }
+
     fclose(fp);
+    pthread_mutex_unlock(&kv_lock);
     return 0;
 }
