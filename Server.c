@@ -8,8 +8,8 @@
 #include <pthread.h>
 #include <strings.h>   // for strcasecmp
 
-#include "common.h"
-#include "kvstore.h"
+#include "Common.h"
+#include "Data_Store.h"
 
 typedef struct {
     int sockfd;
