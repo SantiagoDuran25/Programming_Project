@@ -32,13 +32,13 @@ int main(int argc, char *argv[]) {
 
     printf("Welcome to TinyKV.\n");
     printf("Commands:\n");
-    printf("  SET <key> <value>\n");
-    printf("  GET <key>\n");
-    printf("  DEL <key>\n");
-    printf("  KEYS\n");
-    printf("  SAVE\n");
-    printf("  EXIT\n");
-    printf("> ");
+    printf(" SET <key> <value>\n GET <key>\n DEL <key>\n KEYS\n SAVE\n EXIT\n");
+
+    // Print prompt ONLY if interactive terminal
+    if (isatty(STDIN_FILENO)) {
+        printf("> ");
+        fflush(stdout);
+    }
 
     char send_buf[BUF_SIZE];
     char recv_buf[BUF_SIZE];
@@ -47,25 +47,26 @@ int main(int argc, char *argv[]) {
         if (!fgets(send_buf, sizeof(send_buf), stdin))
             break;
 
-        // Send command to server
+        // Send to server
         send(sockfd, send_buf, strlen(send_buf), 0);
 
-        // If EXIT, stop after sending
+        // If EXIT command, break right away
         if (strncasecmp(send_buf, "EXIT", 4) == 0)
             break;
 
-        // Read one response from server
+        // Receive server response
         int n = recv(sockfd, recv_buf, sizeof(recv_buf) - 1, 0);
-        if (n <= 0)
-            break;
+        if (n <= 0) break;
         recv_buf[n] = '\0';
 
         // Print server response
         printf("%s", recv_buf);
 
-        // Prompt for next command
-        printf("> ");
-        fflush(stdout);
+        // Print prompt ONLY if interactive mode
+        if (isatty(STDIN_FILENO)) {
+            printf("> ");
+            fflush(stdout);
+        }
     }
 
     close(sockfd);
