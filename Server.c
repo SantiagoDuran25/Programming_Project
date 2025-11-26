@@ -8,25 +8,33 @@
 #include "Common.h"
 #include "Data_Store.h"
 
+// =======================
+//   CLIENT HANDLER
+// =======================
 void *client_handler(void *arg) {
-    int sockfd = *(int *)arg;
+    int sockfd = *(int*)arg;
     free(arg);
 
     char buffer[512];
-    char cmd[16];
-    char key[KEY_LEN];
-    char value[VALUE_LEN];
+    char cmd[16], key[KEY_LEN], value[VALUE_LEN];
 
     while (1) {
+        memset(buffer, 0, sizeof(buffer));
         ssize_t n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (n <= 0) {
-            break;  // client disconnected
-        }
+        if (n <= 0) break;
         buffer[n] = '\0';
 
-        // Parse command word
-        if (sscanf(buffer, "%15s", cmd) != 1) {
-            send(sockfd, "ERROR\n", 6, 0);
+        // Trim leading whitespace
+        char *p = buffer;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        if (*p == '\0') {  // Blank input
+            send(sockfd, "> ", 2, 0);
+            continue;
+        }
+
+        // Extract command
+        if (sscanf(p, "%15s", cmd) != 1) {
+            send(sockfd, "ERROR: Invalid input\n> ", 22, 0);
             continue;
         }
 
@@ -38,79 +46,86 @@ void *client_handler(void *arg) {
 
         // ================= SET ==================
         else if (!strcasecmp(cmd, "SET")) {
-            // key is first word after SET, value is rest of line
-            char *p = buffer + 3;          // after "SET"
-            while (*p == ' ') p++;         // skip spaces
+            char *args = p + 3;  // skip "SET"
+            while (*args == ' ') args++;
 
-            if (sscanf(p, "%63s", key) != 1) {
-                send(sockfd, "ERROR\n", 6, 0);
+            if (sscanf(args, "%63s", key) != 1) {
+                send(sockfd, "ERROR: Usage SET <key> <value>\n> ", 33, 0);
                 continue;
             }
 
-            char *v = strchr(p, ' ');
+            char *v = strchr(args, ' ');
             if (!v) {
-                send(sockfd, "ERROR\n", 6, 0);
+                send(sockfd, "ERROR: Usage SET <key> <value>\n> ", 33, 0);
                 continue;
             }
-            v++;  // first char of value
 
-            // copy entire remaining line as value
-            strncpy(value, v, VALUE_LEN);
-            value[VALUE_LEN - 1] = '\0';
-            // strip trailing newline / \r
-            value[strcspn(value, "\r\n")] = '\0';
+            v++;
+            while (*v == ' ') v++;
 
-            kv_set(key, value);
-            send(sockfd, "OK\n", 3, 0);
+            if (*v == '\0') {
+                send(sockfd, "ERROR: Value cannot be empty\n> ", 30, 0);
+                continue;
+            }
+
+            // Check for extra arguments beyond value
+            char extra[8];
+            if (sscanf(v, "%255s %7s", value, extra) == 2) {
+                send(sockfd, "ERROR: Too many arguments\n> ", 28, 0);
+                continue;
+            }
+
+            kv_set(key, v);
+            send(sockfd, "OK\n> ", 5, 0);
         }
 
         // ================= GET ==================
         else if (!strcasecmp(cmd, "GET")) {
-            if (sscanf(buffer, "%*s %63s", key) == 1) {
-                if (kv_get(key, value, sizeof(value)) == 0) {
-                    char out[VALUE_LEN + 2];
-                    snprintf(out, sizeof(out), "%s\n", value);
-                    send(sockfd, out, strlen(out), 0);
-                } else {
-                    send(sockfd, "NOT FOUND\n", 10, 0);
-                }
+            if (sscanf(p, "%*s %63s", key) != 1) {
+                send(sockfd, "ERROR: Usage GET <key>\n> ", 24, 0);
+                continue;
+            }
+
+            if (kv_get(key, value, sizeof(value)) == 0) {
+                char out[VALUE_LEN + 4];
+                snprintf(out, sizeof(out), "%s\n> ", value);
+                send(sockfd, out, strlen(out), 0);
             } else {
-                send(sockfd, "ERROR\n", 6, 0);
+                send(sockfd, "NOT FOUND\n> ", 12, 0);
             }
         }
 
         // ================= DEL ==================
         else if (!strcasecmp(cmd, "DEL")) {
-            if (sscanf(buffer, "%*s %63s", key) == 1) {
-                if (kv_delete(key) == 0) {
-                    send(sockfd, "DELETED\n", 8, 0);
-                } else {
-                    send(sockfd, "NOT FOUND\n", 10, 0);
-                }
-            } else {
-                send(sockfd, "ERROR\n", 6, 0);
+            if (sscanf(p, "%*s %63s", key) != 1) {
+                send(sockfd, "ERROR: Usage DEL <key>\n> ", 24, 0);
+                continue;
             }
+            if (kv_delete(key) == 0)
+                send(sockfd, "DELETED\n> ", 10, 0);
+            else
+                send(sockfd, "NOT FOUND\n> ", 12, 0);
         }
 
         // ================= KEYS =================
         else if (!strcasecmp(cmd, "KEYS")) {
             char keys_buf[4096];
             int used = kv_keys(keys_buf, sizeof(keys_buf));
-            // kv_keys should always write something (even "(empty)\n")
             send(sockfd, keys_buf, used, 0);
+            send(sockfd, "> ", 2, 0);
         }
 
         // ================= SAVE =================
         else if (!strcasecmp(cmd, "SAVE")) {
             if (kv_save() == 0)
-                send(sockfd, "SAVED\n", 6, 0);
+                send(sockfd, "SAVED\n> ", 8, 0);
             else
-                send(sockfd, "ERROR\n", 6, 0);
+                send(sockfd, "ERROR: Save failed\n> ", 21, 0);
         }
 
-        // ============== UNKNOWN =================
+        // ============== UNKNOWN COMMAND ==========
         else {
-            send(sockfd, "UNKNOWN\n", 8, 0);
+            send(sockfd, "ERROR: Unknown command\n> ", 25, 0);
         }
     }
 
@@ -118,13 +133,14 @@ void *client_handler(void *arg) {
     pthread_exit(NULL);
 }
 
+// =======================
+//   SERVER MAIN
+// =======================
 int main(int argc, char *argv[]) {
     int port = 5001;
-    if (argc == 2) {
-        port = atoi(argv[1]);
-    }
+    if (argc == 2) port = atoi(argv[1]);
 
-    // Initialize key-value store from file
+    // Load existing data
     kv_init(DUMP_FILE);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
