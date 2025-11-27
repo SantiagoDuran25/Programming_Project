@@ -37,7 +37,10 @@ static unsigned int hash(const char *key) {
 // =======================
 int kv_init(const char *filename) {
     memset(table, 0, sizeof(table));
-    strncpy(dump_filename, filename, sizeof(dump_filename));
+
+    // Store dump filename safely
+    strncpy(dump_filename, filename, sizeof(dump_filename) - 1);
+    dump_filename[sizeof(dump_filename) - 1] = '\0';
 
     FILE *fp = fopen(filename, "r");
     if (!fp) return 0; // No file yet
@@ -59,9 +62,11 @@ int kv_set(const char *key, const char *value) {
     unsigned int h = hash(key);
     Entry *curr = table[h];
 
+    // Overwrite existing key
     while (curr) {
-        if (strcmp(curr->key, key) == 0) { // overwrite existing
-            strncpy(curr->value, value, VALUE_LEN);
+        if (strcmp(curr->key, key) == 0) {
+            strncpy(curr->value, value, VALUE_LEN - 1);
+            curr->value[VALUE_LEN - 1] = '\0'; // ensure null-termination
             pthread_mutex_unlock(&kv_lock);
             return 0;
         }
@@ -70,8 +75,17 @@ int kv_set(const char *key, const char *value) {
 
     // Create new entry
     curr = malloc(sizeof(Entry));
-    strncpy(curr->key, key, KEY_LEN);
-    strncpy(curr->value, value, VALUE_LEN);
+    if (!curr) {
+        pthread_mutex_unlock(&kv_lock);
+        return -1;
+    }
+
+    strncpy(curr->key, key, KEY_LEN - 1);
+    curr->key[KEY_LEN - 1] = '\0';
+
+    strncpy(curr->value, value, VALUE_LEN - 1);
+    curr->value[VALUE_LEN - 1] = '\0';
+
     curr->next = table[h];
     table[h] = curr;
 
@@ -90,7 +104,13 @@ int kv_get(const char *key, char *out_buf, size_t out_size) {
 
     while (curr) {
         if (strcmp(curr->key, key) == 0) {
-            strncpy(out_buf, curr->value, out_size);
+            if (out_size == 0) {
+                pthread_mutex_unlock(&kv_lock);
+                return -1;
+            }
+            // Copy at most out_size-1 characters and always terminate
+            strncpy(out_buf, curr->value, out_size - 1);
+            out_buf[out_size - 1] = '\0';
             pthread_mutex_unlock(&kv_lock);
             return 0;
         }
