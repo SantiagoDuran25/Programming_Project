@@ -1,14 +1,17 @@
 #!/bin/bash
 
-# Start server in background
-./server &
+# Always run from project root
+cd "$(dirname "$0")"
+
+# Start server from build folder on port 5001
+./build/server 5001 &
 SERVER_PID=$!
 
-# Small delay to ensure it starts
+# Small delay so server starts
 sleep 0.5
 
-# Send 3 commands and print output
-echo -e "SET x 10\nGET x\nEXIT" | nc 127.0.0.1 5001
+# Send commands through our own client
+printf "SET x 10\nGET x\nEXIT\n" | ./build/client 127.0.0.1 5001
 
-# Kill server after test
-kill $SERVER_PID
+# Kill the server after test
+kill $SERVER_PID 2>/dev/null
