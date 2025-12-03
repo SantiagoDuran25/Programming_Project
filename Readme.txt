@@ -60,7 +60,6 @@ NOT FOUND
 
 conda activate myenv
 
-
 Create and enter the build directory:
 
 mkdir build
@@ -159,17 +158,34 @@ All data operations occur inside locked critical sections
 ======================================================
 🧪 SIMPLE TEST SCRIPT
 
-A minimal test script verifies basic functionality:
-
-./run_tests.sh
+Remove any build if created: rm -rf build
+Crete a new build: mkdir build
+cd build
+Then run: cmake ..
+also: cmake --build .
+Go back to the project root: cd ..
+Mac run: chmod +x run_tests.sh
+And run: ./run_tests.sh
 
 
 Expected output:
 
-OK
-10
-Bye
+TinyKV server listening on port 5001   ← server started (good)
 
+Welcome to TinyKV.                     ← client started (normal)
+Commands:
+ SET <key> <value>
+ GET <key>
+ DEL <key>
+ KEYS
+ SAVE
+ EXIT
+
+OK                                     ← result of: SET x 10
+> 10                                   ← result of: GET x
+                                        (the '>' is the prompt)
+
+Bye                                    ← result of: EXIT
 ======================================================
 💾 PERSISTENCE (SAVE COMMAND)
 
